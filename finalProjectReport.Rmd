@@ -1,0 +1,721 @@
+---
+title: "STA 141A Course Project Report: Determining and Predicting The Relationship Between Neural Activity and Mice Success"
+author: "Jeremy Elvander"
+date: "2024-03-18"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+## Abstract
+
+This project consisted of investigating the relationship between a variety of predictive factors and the success of four mice in a neuroscience experiment. Goals included determining the data structure, exploring the data to understand the relationship between all variables, integrating the data into a usable format, and building a predictive model with this integrated data. This model was used to predict whether a experiment trial would be a success or a failure, depending on a variety of factors. Several interesting relationships were discovered during exploratory data analysis, and multiple models were made using multiple statistical modeling methods. Conclusions were made based on a final model, which was chosen with predefined criteria. This model was evaluated on a final set of test data, to determine its accuracy and reliability regarding its predictive performance. 
+
+## Introduction
+
+The topic of this project comes from data collected during the study "Distributed coding of choice, action, and engagement across the mouse brain", by Steinmetz et al. (2019). This experiment involves the observation of 10 different mice across 39 different sessions, where each session involves many sequential trials where different stimuli is administered to the mouse. Within a trial, each mouse is given a visual stimuli through the medium of two screens on either side of the mouse, where the screens differed in their 'contrast levels'. Contrast levels consisted of 0, 0.25, 0.5, and 1, ordered from no stimuli (0) to maximum contrast (1). Given these base conditions, each mouse made a decision (labelled as feedback), which was made by moving a wheel controlled by their forepaws. Rewards and penalties were administered based on the wheel decision, depending on the contrast conditions. A 1 denotes a successful trial (where the correct decision was made), whereas a -1 represents a failure (the incorrect decision was made). When contrast on the left screen had a greater assigned value than the contrast on the right screen, turning the wheel to the right represented a success while any other decision represented a failure. In this same way, when right contrast exceeds left contrast, success was given for turning the wheel to the left, and failure otherwise. If left and right contrast were both 0, moving the wheel at all was considered a failure. On the other hand, if left and right contrast were not 0 but both equal, success would be randomly chosen as either rotating the wheel to the left or the right. 
+
+To explore how the brain reacted to the different trials and stimuli conditions, the researchers recorded the activity of neurons within the visual cortex of each mouse, recording data from several different brain areas. This neuron information is represented by 'spike trains', which show neurons firing across pre-specified time bins. In this paper, the focus will be on the spike trains of the first 0.4 seconds after stimuli was administered. To simplify the data analysis and modeling process, this investigation will additionally focus on sessions 1 through 18, which have Cori, Frossman, Hence, and Lederberg as our mice subjects.
+
+In designing this project, there were several influencing factors to consider when deciding how to begin. The data is not packaged in a traditional data format (such as CSV), but rather through an assymetric "list of lists", with varying dimensions between sessions and between variables. Each session has a different number of trials and a different number of neurons (from differing brain areas), making preliminary cleaning and analysis complex. Additionally, each mouse participated in a different number of sessions, adding an additional layer of complexity to the data structure. Besides this, the format for much of the recorded data (such as spike trains) would seem impractical for analysis in their given formats, making data restructuring potentially necessary.
+
+The main goal of this project is to build a predictive model for feedback (or whether a trial was a success or failure), based on the best collection of predictors. Analysis and modeling focuses especially on the contrast levels and neural activity, which would logically be most correlated with a successful or unsuccessful trial. This goal was constructed with the desired result for better understanding of the data and how to predict its outcome, and a better understanding of the underlying statistical techniques to achieve this. 
+
+Upon preliminary reflection over the expirement used for this model building, including its design, execution, and subsequently collected data, there are several potential approaches to be taken when beginning to construct a model. With a variety of potential predictor variables and a plethora of statistical methods to employ to achieve the end goal of modeling feedback, exploratory data analysis is necessary to gain a deeper understanding of the underlying data structure, and to begin identifying potential relationships between variables.
+
+## Exploratory Analysis
+```{r, echo = FALSE, include = FALSE}
+library(tidyverse)
+library(wesanderson)
+library(viridis)
+library(ggformula)
+library(gridExtra)
+library(caret)
+library(ROCR)
+library(xgboost)
+library(scales)
+library(htmlTable)
+```
+```{r, echo = FALSE}
+session=list()
+for(i in 1:18){
+  session[[i]]=readRDS(paste('/Users/jeremyelvander/Desktop/STA 141A/Final Project/sessions/session',i,'.rds',sep=''))
+  #print(session[[i]]$mouse_name)
+  #print(session[[i]]$date_exp)
+}
+```
+
+To begin exploring the data recorded within the first 18 sessions, session information was downloaded from the various session RDS files and stored in a list, where each index of the list corresponded with a specific session. There are several variables attached to each session (with information pertaining to each trial). These included feedback_type, contrast_left, contrast_right, time, spks, and brain_area. feedback_type gives information on whether a trial was a success or failure, contrast_left and contrast right give information about the respective stimuli for each screen, time represents the center of the time bins for the spks variable, spks represents the number of neuron spikes, and brain_area represents which part of the brain each recorded neuron resides in. 
+
+With a basic understanding of the underlying data structure, preliminary analysis began by considering the number of neurons and number of trials for each session. 
+
+```{r, echo = FALSE}
+sessionNumber <- c(1:18)
+sessInfo <- data.frame(sessionNumber)
+
+numNeurons <- c()
+for(i in 1:18){
+  numNeurons <- c(numNeurons, length(session[[i]]$brain_area))
+
+}
+sessInfo <- data.frame(sessInfo, numNeurons)
+
+numTrials <- c()
+for(i in 1:18){
+  numTrials <- c(numTrials, length(session[[i]]$feedback_type))
+}
+sessInfo <- data.frame(sessInfo, numTrials)
+
+mouseName <- c()
+for(i in 1:18){
+  mouseName <- c(mouseName, session[[i]]$mouse_name)
+}
+sessInfo <- data.frame(sessInfo, mouseName)
+
+plot1 <- ggplot(sessInfo, aes(x = sessionNumber, y = numNeurons, fill = mouseName)) +
+  geom_bar(stat = "identity")
+plot2 <- ggplot(sessInfo, aes(x = sessionNumber, y = numTrials, fill = mouseName)) +
+  geom_bar(stat = "identity")
+grid.arrange(plot1, plot2)
+```
+
+As pictured above, each mouse participated in a varying number of trials per session (and each mouse participated in a varying number of sessions). Additionally, Each mouse had a varying number of active neurons per session. This information is valuable as it can show a potential performance depending on session number or mouse, as different mice were subjected to different amounts of trials (under the hypothesis that a mouse might get tired as trials continue and start performing worse).
+
+Before further exploring these potential relationships, it was necessary to further explore spike train data due to the complexity of neural information. With a varying number of neurons per session and trial, it was important to find a way to compare neurons across trials and sessions. From some brief exploratory analysis, it was clear that brain_area added a high degree of complexity to the analysis of neural activity. For this reason, the brain area of each neuron was omitted in further exploratory analysis (and subsequent model building), to focus on better understanding the relationship between other predictors. This decision was also made because a relationship between brain area and neural activity did not seem straightforward. With brain area addressed, One avenue to compare neurons across trials and sessions was by analyzing the proportion of all neurons fired at different time intervals within specific trials. Pictured below are plots made analyzing the change in proportion of neurons fired over time, sampling the first 5 trials from session 1 (Cori) and session 18 (Lederberg).
+
+```{r, echo = FALSE}
+time <- c(session[[1]]$time[[1]]-session[[1]]$time[[1]][1])
+avgSpikeFrame1 <- data.frame(time)
+for(i in 1:10){
+  trial <- data.frame(session[[1]]$spks[[i]])
+  ProportionFired <- c()
+  for(j in 1:40){
+    ProportionFired <- c(ProportionFired, sum(trial[,j])/734)
+  }
+  avgSpikeFrame1 <- data.frame(avgSpikeFrame1, ProportionFired)
+}
+
+colors <- wes_palette("Darjeeling1", 5, type = c("discrete"))
+plot1 <- ggplot(avgSpikeFrame1, aes(x=time)) +
+  geom_line(aes(y = ProportionFired), color = colors[1]) +
+  geom_line(aes(y = ProportionFired.1), color = colors[2]) +
+  geom_line(aes(y = ProportionFired.2), color = colors[3]) +
+  geom_line(aes(y = ProportionFired.3), color = colors[4]) +
+  geom_line(aes(y = ProportionFired.4), color = colors[5])
+
+
+time <- c(session[[1]]$time[[1]]-session[[1]]$time[[1]][1])
+avgSpikeFrame2 <- data.frame(time)
+for(i in 1:10){
+  trial <- data.frame(session[[18]]$spks[[i]])
+  Proportion18Fired <- c()
+  for(j in 1:40){
+    Proportion18Fired <- c(Proportion18Fired, sum(trial[,j])/1090)
+  }
+  avgSpikeFrame2 <- data.frame(avgSpikeFrame2, Proportion18Fired)
+}
+
+colors <- wes_palette("Darjeeling1", 5, type = c("discrete"))
+plot2 <- ggplot(avgSpikeFrame2, aes(x=time)) +
+  geom_line(aes(y = Proportion18Fired), color = colors[1]) +
+  geom_line(aes(y = Proportion18Fired.1), color = colors[2]) +
+  geom_line(aes(y = Proportion18Fired.2), color = colors[3]) +
+  geom_line(aes(y = Proportion18Fired.3), color = colors[4]) +
+  geom_line(aes(y = Proportion18Fired.4), color = colors[5])
+
+grid.arrange(plot1, plot2, nrow = 2)
+```
+
+These graphs looked similar across a wider variety of trials and sessions (including sessions with the other two mice). This method of analyzing neural activity did not result in meaningful insights, which led to a change in analysis. The average number of spikes per neuron per trial was calculated and plotted, with no meaningful relationship found. Eventually, the average number of spikes for every active neuron per trial was calculated, giving 1 value to represent 'average neural activity' per trial, for every trial in the 18 sessions. In graphing the average number of total spikes for all active neurons per trial (for a sample of the first 100 trials for all 18 sessions), it was possible to begin understanding differences in neural activities across sessions and across trials (and subsequently, as time within a session went on). A sample of the first 100 trials per session was used to account for the variety of trials per session (as it would not be useful to compare change over number of trials for a session with four times as many trials as another). These first 100 trials can be interpreted in the context of the relationship between trial and response variable from the start of and well into each session. While this gives a good impression for change across trial, it is not necessarily representative of the change across the entire session. Nevertheless, this information can be used to understand potential relationships between different predictors and factors. 
+
+```{r, echo = FALSE}
+Spks1 <- mean(apply(session[[1]]$spks[[1]], 1, sum))
+avgNeuronSpksTotal <- data.frame(Spks1)
+
+for(i in 2:100){
+  Spks1 <- mean(apply(session[[1]]$spks[[i]], 1, sum))
+  avgNeuronSpksTotal <- data.frame(avgNeuronSpksTotal, Spks1)
+  
+}
+avgNeuronSpksTotal <- pivot_longer(avgNeuronSpksTotal, everything())
+avgNeuronSpksTotal <- avgNeuronSpksTotal %>%
+  select(value) %>%
+  mutate(trial = c(1:100))
+
+finalNrnFrame <- data.frame(trial = c(1:100))
+for(i in 1:18){
+  NeuronTot <- c()
+  for(j in 1:100){
+    tmpSpk <- mean(apply(session[[i]]$spks[[j]], 1, sum))
+    NeuronTot <- c(NeuronTot, tmpSpk)
+  }
+  #NeuronTot <- NeuronTot %>%
+   # pivot_longer(NeuronTot, everything()) %>%
+   # select(value)
+  finalNrnFrame <- data.frame(finalNrnFrame, NeuronTot)
+}
+
+tmp <- finalNrnFrame %>%
+  select(-trial) %>%
+  stack()
+tmp <- data.frame(tmp, trial = rep(1:100, times = 18), sessionNumber = rep(1:18, each = 100)) %>%
+  select(-ind) %>%
+  group_by(sessionNumber)
+
+feedbackTemp <- c()
+for(i in 1:18){
+  feedback <- session[[i]]$feedback_type
+  for(j in 1:100){
+    feedbackTemp <- c(feedbackTemp, feedback[j])
+  }
+}
+tmp <- data.frame(tmp, feedbackType = as.character(feedbackTemp))
+
+sessInfoRel <- data.frame(sessionNumber = sessInfo$sessionNumber, mouseName = sessInfo$mouseName)
+tmp <- merge(tmp, sessInfoRel, by = "sessionNumber")
+
+contrLeft <- c()
+contrRight <- c()
+for(i in 1:18){
+  for(j in 1:100){
+    contrLeft <- c(contrLeft, session[[i]]$contrast_left[j])
+    contrRight <- c(contrRight, session[[i]]$contrast_right[j])
+  }
+}
+tmp <- data.frame(tmp, ContrastLeft = contrLeft, ContrastRight = contrRight)
+
+plot <- ggplot(tmp, aes(x = trial, y = values, color = as.character(sessionNumber))) +
+  geom_point(size = 0.5) +
+  geom_spline(aes(group = sessionNumber))
+print(plot)
+```
+
+As seen by the plot pictured above, there is great variety across sessions when modeling the relationship between the average number of all active neuron spikes per trial (for the first 100 trials of all 18 sessions). Splines were used to track the rate of change of average neuron spikes, as simple linear relationships seemed ineffective in showing the true variability of the data. Session 6, for example, has a very low average number of spikes, and this average stayed relatively consistent as trials progressed. On the other hand, session 13 had a far higher average number of spikes when compared to the other trials. In addition to this, session 13 also remained relatively consistent across trials. Other sessions had noticeable change in the average number of spikes as trials progressed. Session 9, for example, has a negative relationship between trials and average spikes, whereas session 7 features a clear positive trend. Some of these example plots are pictured exclusively below.
+
+```{r, echo = FALSE}
+palette <- scale_color_hue() 
+hex <- c(palette$palette(18))
+plotScale <- ggplot_build(plot)
+yRange <- plotScale$layout$panel_scales_y[[1]]$range$range
+
+ggplot(finalNrnFrame, aes(x=trial)) +
+  geom_point(aes(y=NeuronTot.5), size = 0.5, color = hex[15]) +
+  geom_spline(aes(y=NeuronTot.5), color = hex[15]) +
+  
+  geom_point(aes(y=NeuronTot.12), size = 0.5, color = hex[5]) +
+  geom_spline(aes(y=NeuronTot.12), color = hex[5]) +
+  
+  #geom_point(aes(y=NeuronTot.8), size = 0.5, color = hex[18]) +
+  #geom_spline(aes(y=NeuronTot.8), color = hex[18]) +
+  
+  geom_point(aes(y=NeuronTot.6), size = 0.5, color = hex[16]) +
+  geom_spline(aes(y=NeuronTot.6), color = hex[16]) +
+  
+  scale_y_continuous(limits = yRange)
+```
+
+After analyzing average neurons fired for first hundred trials when sorting by session, a next logical step became investigating neural activity by mouse. This involved a similar setup to the visualizations by session, but switching the color and spline for mouse instead of trial.
+
+```{r, echo = FALSE}
+ggplot(tmp, aes(x = trial, y = values, color = mouseName)) +
+  geom_point(size = 0.5) +
+  geom_spline()
+```
+
+By investigating the relationship by mouse, it became clear that there were noticeable differences in average spikes. Interestingly, despite fitting splines to the scatterplots, the relationship between trial number and average neuron spikes was linear for each mouse (for the sample of the first 100 trials). This supports the notion of a linear relationship between trial number and average number of neuron spikes per mouse. That being said, the slope of the approximate lines pictured above are all relatively low (with the exception of Cori, comparatively), indicating that a change in trial may result in little change in average neuron spikes. This runs in opposition to the preliminary hypothesis that the number of trials a mouse partakes in may have an affect on the neural activity of that mouse. It is also interesting to note the close performance of Hench and Lederberg, and the average lower neural activity of Forssmann when comparing to the other three mice. 
+
+With the relationship between average neuron spikes per trial (which is being used to generalize 'neural activity'), it is possible to introduce the main variable of interest for prediction - feedback type. 
+
+```{r, echo = FALSE}
+ggplot(tmp, aes(x = trial, y = values, color = feedbackType)) +
+  geom_point(size = 0.5) +
+  geom_smooth(method = "lm")
+```
+
+As shown above, as trial number progresses (for the first 100 trials for all 18 sessions), the average number of neuron spikes for a success and failure trial remain in fairly close proximity. As time goes on, a small relationship can be observed, where the average number of neuron spikes for successful trials trends slightly negatively and the average number of neuron spikes for unsuccessful trials trends slightly positively. Generally, it seems that trials that resulted in success (regardless of session) tend to have slightly higher average neuron spikes across all neurons. This could indicate some sort of meaningful relationship between average neuron spikes and trial number. 
+
+To further investigate this relationship, this plot can be rearranged and split to show success/failure in relation to trial and average neuron spikes for each session.
+
+```{r, echo = FALSE}
+ggplot(tmp, aes(x = trial, y = values, color = as.character(sessionNumber))) +
+  geom_point(size = 0.5) +
+  geom_spline() +
+facet_wrap(~feedbackType)
+```
+
+The above plots show that, for most sessions, successful trials follow the general relationships between trial and average neuron spikes. For trials that result in failure, however, there is much higher variability. Though some of this may be due to a lower number of unsuccessful trials, the more extreme variability is worth noting. This plot can also be recreated grouping by mouse, as shown below.
+
+```{r, echo = FALSE}
+ggplot(tmp, aes(x = trial, y = values, color = mouseName)) +
+  geom_point(size = 0.5) +
+  geom_spline() +
+  facet_wrap(~feedbackType)
+```
+
+The two mice performing at the two 'extremes' of the data set (Cori with a higher average number of neuron spikes and Forssmann with a lower level) both remained relatively consistent with the average number of spikes per trial regardless if the trial was a success or failure. Hench and Lederberg, however (who had a similar number of average spikes as discussed earlier), had much larger variety in trials that resulted in failure, with the average number of spikes potentially being lower. This could represent a potential relationship between which mouse was the subject and the chance for a successful trial, making the mice a potentially relevant predictor.
+
+To conclude the analysis of the relationship between neural activity (average neuron spikes) and other predictors, contrast (including left and right contrast) was factored in. 
+
+```{r, echo = FALSE}
+plot1 <- ggplot(tmp, aes(x = trial, y = values, color = as.character(ContrastLeft))) +
+  geom_point(size = 0.5) +
+  geom_spline()
+plot2 <- ggplot(tmp, aes(x = trial, y = values, color = as.character(ContrastRight))) +
+  geom_point(size = 0.5) +
+  geom_spline()
+grid.arrange(plot1, plot2)
+```
+
+By looking at the average neuron spikes per trial, divided by the left and right contrast (and the strength of stimuli applied), it can be concluded that a lower strength of stimuli correlates with lower neural activity, especially for the right contrast. This relationship is less clear for left contrast, which might imply that the mice were not processing the left contrast as well as the right. For both left contrast and right contrast, it seems there is more clustering of lower average neuron spikes for 0 contrast trials, whereas the average spikes for a contrast of 1 is more evenly distributed throughout the graph. 
+
+```{r, echo = FALSE}
+ggplot(tmp, aes(x = trial, y = values, color = as.character(ContrastLeft))) +
+  geom_point(size = 0.5) +
+  geom_spline() +
+  facet_wrap(~feedbackType)
+```
+```{r, echo = FALSE}
+ggplot(tmp, aes(x = trial, y = values, color = as.character(ContrastRight))) +
+  geom_point(size = 0.5) +
+  geom_spline() +
+  facet_wrap(~feedbackType)
+```
+
+As pictured by the above graphs, there is a clear difference between the average number of neuron spikes and contrast for right contrast successful trials (where higher contrast correlates with higher average spikes), but the number of average neuron spikes for right contrast failure trials was far more variable. For left contrast, there was a less clear relationship, for both success and failure trials. This shows that there may be a relationship between success and failure and contrast level, especially for right contrast.
+
+After analyzing the relationship between the response variable and all possible predictors, it becomes prudent to expand from the first 100 trials to all available data, with the goal of calculating summary statistics that pertain to all trials and all sessions. 
+
+```{r, echo = FALSE}
+AllTrialSeshInfo <- data.frame(trialNumber = 0, seshNum = 0, miceName = 0, feedbackType = 0, leftContrast = 0, rightContrast = 0,
+                               avgTrialNeuronSpk = 0)
+for(i in 1:18){
+  #Creating session number/trial number
+  seshFrame <- data.frame(trialNumber = c(1:length(session[[i]]$feedback_type)),
+                          seshNum = c(rep(i, times = length(session[[i]]$feedback_type))),
+                          miceName = c(rep(session[[i]]$mouse_name, times = length(session[[i]]$feedback_type))),
+                          feedbackType = c(session[[i]]$feedback_type),
+                          leftContrast = c(session[[i]]$contrast_left),
+                          rightContrast = c(session[[i]]$contrast_right))
+  
+  avgTrialNeuronSpk <- c()
+
+  for(j in 1:length(session[[i]]$feedback_type)){
+    avgTrialNeuronSpk <- c(avgTrialNeuronSpk, mean(apply(session[[i]]$spks[[j]], 1, sum)))
+  }
+  seshFrame <- data.frame(seshFrame, avgTrialNeuronSpk)
+  AllTrialSeshInfo <- rbind(AllTrialSeshInfo, seshFrame)
+}
+AllTrialSeshInfo <- AllTrialSeshInfo[-1,]
+```
+```{r, echo = FALSE, include = FALSE}
+AllTrialSeshInfo %>%
+  summarize(sum(feedbackType == 1)/nrow(AllTrialSeshInfo))
+```
+
+Within the available data from 18 sessions, the session-wide proportion of successful trials is 0.7100964.
+
+```{r, echo = FALSE}
+successPer <- AllTrialSeshInfo %>%
+  group_by(seshNum) %>%
+  summarize(prop = mean(feedbackType == 1))
+
+ggplot(successPer, aes(x = seshNum, y = prop)) +
+  geom_bar(stat ="identity") +
+  geom_abline(slope = 0, intercept = 0.7100964, color = "red")
+```
+
+Looking at the success rate of each session (averaging the proportion of successes of all trials), it is evident all seshions had relatively high success rates. That being said, only a few were higher than the average success rate of 0.71.
+
+```{r, echo = FALSE}
+successPerMouse <- AllTrialSeshInfo %>%
+  group_by(miceName) %>%
+  summarize(prop = mean(feedbackType == 1))
+
+ggplot(successPerMouse, aes(x = miceName, y = prop)) +
+  geom_bar(stat = "identity") +
+  geom_abline(slope = 0, intercept = 0.7100964, color = "red")
+```
+
+Looking at success rate for each mouse, it is clear each mouse performed relatively well. Lederberg is the only mouse to beat the average success rate, and Cori lags behind the group slightly. By referencing earlier visualizations, an interesting relationship begins to form. Cori has the highest level of average neuron spikes compared to the other mice across the first 100 trials, yet has the lowest success rate. This could point towards an inverse relationship, where as average neuron spikes go up, success rate goes down. 
+
+Other graphs were made, but no other significant findings could be taken from the other visualizations made. Through exploratory data analysis, it was determined that trial number, session number, left contrast, right contrast, mouse name, and average neural spikes could be potential predictors for feedback type.
+
+## Data Integration
+
+Most data integration was done during exploratory data analysis, with the goal in mind of being able to use the most amount of data possible, to increase the accuracy of potential models. To do this, data for each session was reorganized into a data frame with rows equal to the number of trials and columns for session number, trial number, mouse name, left contrast, right contrast, feedback type, and average neuron spikes per trial. Each row was labelled with the session it was a part of, the trial number, the mouse for that particular session, the left and right contrast, the average neuron spikes for that trial, and whether the trial was a success or failure. This process was repeated for each session, and these sessions were eventually combined into one large data frame, with 5,081 rows corresponding to every trial across the 18 sessions. This allows for searching for session through filtering, but provides a clean way to access the most amount of data as possible. This also sets the data up well for preprocessing, by making it easy to mutate variables into new ones. 
+
+One example of this was in calculating a new variable to add to the predictive abilities of future models. This variable was contrast difference, which represents the absolute value difference between left and right contrast. If, for example, both left and right contrast had values of 1, then the absolute value difference would be 0. This variable was created and included as a potential predictor since it adds context toe the left and right contrast variables. It provides a tangible relationship between the two types of contrast, which could be helpful for understanding how they interact in affecting the ultimate outcome of a specific trial.
+
+Finally, the data was integrated into this new structure to allow for convenient conversion of categorical variables into useful variables that can be fed into a prediction variable. Specifically, this allowed for explicit one-hot encoding of the miceName variable. This was done outright, but is also calculated implicitly by the modeling functions used later in the project.
+
+## Predictive Modeling
+
+Using the information gained from exploratory data analysis and the fully integrated data set, model building consisted of trying various combinations of predictors using a logistic regression modeling method. Logistic regression was originally chosen due to its strength in binary classification, which was the main topic of this project. To train and test each model, the integrated data set was randomly sampled and split into two data frames, 80% of the original integrated data going into a training model and 20% going into a testing model. K-folds cross validation was attempted for some models, but produced inaccurate results, leading to a simple split approach being chosen for model evaluation and validation. In total, 8 models were built, with various predictive capabilities. Classification threshold was chosen based on model ROC curve (specifically, choosing the approximate y value, or true positive rate, for the section of the ROC curve closest to a 90 degree angle). Cohen's kappa coefficient was also considered, as a classification threshold that increased accuracy but significantly lowered kappa value was not desired, under the assumption that a lower kappa would mean lower inter-rater reliability, and worse performance at distinguishing between positive and negative feedback. Regardless of threshold tuning, AUC was used as the main decision factor to pick a final logistic regression model.
+
+A brief summary of the logistic regression models made is as follows. logModel1 uses leftContrast, rightContrast, and average neuron spikes as predictors. modelOHE1 uses leftContrast, rightContrast, average neuron spikes, and one-hot encoding variables for each mouse (Cori, Forssmann, Hench, and Lederberg) as predictors. modelOHE2 uses the same predictors, but dropped Lederberg as a predictor to avoid the singularity created by the one-hot encoded variables. modelOHE3 uses the glm() functions internal encoding, and swaps the custom one-hot variables with just miceName. It otherwise has the same predictors. modelCont1 features the inclusion of 'contrast difference' (as discussed earlier), using left contrast, right contrast, average neuron spikes, and contrast difference as predictors. modelSesh1 uses leftContrast, rightContrast, average neuron spikes, and session number as predictors (based on the exploratory analysis done concerning session number previously). modelCont2 drops many variables, using average neuron spikes, contrast difference, and session number as predictors. Finally, modelEvery1 uses every variable as a predictor, including average neuron spikes, contrast difference, session number, trial number, leftContrast, rightContrast, and mice name. To attempt a rigorous analysis of the model containing every predictor, backwards selection was briefly tried, which did not result in less predictors. Each model was trained on the randomly chosen 80% data subset, and tested on the 20% data subset. Confusion matrices were constructed for each model to compare their overall accuracy, and their ability to recognize both successful trials and unsuccessful trials. For the sake of brevity these confusion matrices (except for the final model, below) have been omitted.
+
+The ROC curves for the logistic models created (pictured below), and the associated AUC scores were used to pick a final model.
+
+```{r, echo = FALSE}
+set.seed(999)
+
+length <- length(AllTrialSeshInfo$feedbackType)
+trainSample <- sample.int(n = length, size = floor(.8 * length), replace = FALSE)
+
+training1 <- AllTrialSeshInfo[trainSample, ]
+testing1  <- AllTrialSeshInfo[-trainSample, ]
+logModel1 <- glm(as.factor(feedbackType) ~ leftContrast + rightContrast + avgTrialNeuronSpk, data = training1, family = binomial)
+pred1 <- predict(logModel1, testing1 %>% select(-feedbackType))
+predModel1 <- factor(pred1 > 0.5, labels = c('-1', '1'))
+
+OHEMouseInfo <- AllTrialSeshInfo
+OHEMouse <- model.matrix(~miceName-1, data = OHEMouseInfo)
+OHEMouseInfo <- data.frame(OHEMouseInfo, OHEMouse)
+trainOHESample <- sample.int(n = length, size = floor(.8 * length), replace = FALSE)
+trainOHE <- OHEMouseInfo[trainOHESample,]
+testOHE <- OHEMouseInfo[-trainOHESample,]
+modelOHE1 <- glm(as.factor(feedbackType) ~ leftContrast + rightContrast + avgTrialNeuronSpk + 
+                   miceNameCori + miceNameForssmann + miceNameHench + miceNameLederberg, 
+                 data = trainOHE, family = binomial(link = "logit"))
+predOHE <- predict(modelOHE1, testOHE %>% select(-feedbackType))
+predModelOHE1 <- factor(predOHE > 0.5, labels = c('-1', '1'))
+
+trainOHESample2 <- sample.int(n = length, size = floor(.8 * length), replace = FALSE)
+trainOHE2 <- OHEMouseInfo[trainOHESample2,]
+testOHE2 <- OHEMouseInfo[-trainOHESample2,]
+modelOHE2 <- glm(as.factor(feedbackType) ~ leftContrast + rightContrast + avgTrialNeuronSpk + 
+                   miceNameCori + miceNameForssmann + miceNameHench, 
+                 data = trainOHE2, family = binomial(link = "logit"))
+predOHE2 <- predict(modelOHE2, testOHE2 %>% select(-feedbackType))
+predModelOHE2 <- factor(predOHE2 > 0.5, labels = c('-1', '1'))
+
+trainOHESample3 <- sample.int(n = length, size = floor(.8 * length), replace = FALSE)
+trainOHE3 <- AllTrialSeshInfo[trainOHESample3,]
+testOHE3 <- AllTrialSeshInfo[-trainOHESample3,]
+modelOHE3 <- glm(as.factor(feedbackType) ~ leftContrast + rightContrast + avgTrialNeuronSpk + 
+                   miceName, 
+                 data = trainOHE3, family = binomial(link = "logit"))
+predOHE3 <- predict(modelOHE3, testOHE3 %>% select(-feedbackType))
+predModelOHE3 <- factor(predOHE3 > 0.5, labels = c('-1', '1'))
+
+contrastFrame <- AllTrialSeshInfo %>%
+  mutate(contrastDiff = abs(leftContrast - rightContrast))
+trainContSample1 <- sample.int(n = length, size = floor(.8 * length), replace = FALSE)
+trainCont1 <- contrastFrame[trainContSample1,]
+testCont1 <- contrastFrame[-trainContSample1,]
+modelCont1 <- glm(as.factor(feedbackType) ~ leftContrast + rightContrast + avgTrialNeuronSpk + 
+                   contrastDiff, 
+                 data = trainCont1, family = binomial(link = "logit"))
+predCont1 <- predict(modelCont1, testCont1 %>% select(-feedbackType))
+predModelCont1 <- factor(predCont1 > 0.5, labels = c('-1', '1'))
+
+trainSeshSample1 <- sample.int(n = length, size = floor(.8 * length), replace = FALSE)
+trainSesh1 <- AllTrialSeshInfo[trainSeshSample1,]
+testSesh1 <- AllTrialSeshInfo[-trainSeshSample1,]
+modelSesh1 <- glm(as.factor(feedbackType) ~ leftContrast + rightContrast + avgTrialNeuronSpk + 
+                   seshNum, 
+                 data = trainSesh1, family = binomial(link = "logit"))
+predSesh1 <- predict(modelSesh1, testSesh1 %>% select(-feedbackType))
+predModelSesh1 <- factor(predSesh1 > 0.5, labels = c('-1', '1'))
+
+trainContSample2 <- sample.int(n = length, size = floor(.8 * length), replace = FALSE)
+trainCont2 <- contrastFrame[trainContSample2,]
+testCont2 <- contrastFrame[-trainContSample2,]
+modelCont2 <- glm(as.factor(feedbackType) ~ avgTrialNeuronSpk + 
+                   contrastDiff +seshNum, 
+                 data = trainCont2, family = binomial(link = "logit"))
+predCont2 <- predict(modelCont2, testCont2 %>% select(-feedbackType))
+predModelCont2 <- factor(predCont2 > 0.5, labels = c('-1', '1'))
+
+trainEverySamp1 <- sample.int(n = length, size = floor(.8 * length), replace = FALSE)
+trainEvery1 <- contrastFrame[trainEverySamp1,]
+testEvery1 <- contrastFrame[-trainEverySamp1,]
+modelEvery1 <- glm(as.factor(feedbackType) ~ avgTrialNeuronSpk + 
+                   contrastDiff +seshNum + leftContrast + rightContrast + trialNumber + miceName, 
+                 data = trainEvery1, family = binomial(link = "logit"))
+predEvery1 <- predict(modelEvery1, testEvery1 %>% select(-feedbackType))
+predModelEvery1 <- factor(predEvery1 > 0.5, labels = c('-1', '1'))
+
+
+
+pred1 <- predict(logModel1, testing1 %>% select(-feedbackType))
+predi1 <- prediction(pred1, testing1$feedbackType)
+prf1 <- performance(predi1, measure = "tpr", x.measure = "fpr")
+auc1 <- performance(predi1, measure = "auc")
+auc1 <- auc1@y.values[[1]]
+
+predOHE <- predict(modelOHE1, testOHE %>% select(-feedbackType))
+prediOHE <- prediction(predOHE, testOHE$feedbackType)
+prfOHE <- performance(prediOHE, measure = "tpr", x.measure = "fpr")
+aucOHE <- performance(prediOHE, measure = "auc")
+aucOHE <- aucOHE@y.values[[1]]
+
+predOHE2 <- predict(modelOHE2, testOHE2 %>% select(-feedbackType))
+prediOHE2 <- prediction(predOHE2, testOHE2$feedbackType)
+prfOHE2 <- performance(prediOHE2, measure = "tpr", x.measure = "fpr")
+aucOHE2 <- performance(prediOHE2, measure = "auc")
+aucOHE2 <- aucOHE2@y.values[[1]]
+
+predOHE3 <- predict(modelOHE3, testOHE3 %>% select(-feedbackType))
+prediOHE3 <- prediction(predOHE3, testOHE3$feedbackType)
+prfOHE3 <- performance(prediOHE3, measure = "tpr", x.measure = "fpr")
+aucOHE3 <- performance(prediOHE3, measure = "auc")
+aucOHE3 <- aucOHE3@y.values[[1]]
+
+predCont1 <- predict(modelCont1, testCont1 %>% select(-feedbackType))
+prediCont1 <- prediction(predCont1, testCont1$feedbackType)
+prfCont1 <- performance(prediCont1, measure = "tpr", x.measure = "fpr")
+aucCont1 <- performance(prediCont1, measure = "auc")
+aucCont1 <- aucCont1@y.values[[1]]
+
+predSesh1 <- predict(modelSesh1, testSesh1 %>% select(-feedbackType))
+prediSesh1 <- prediction(predSesh1, testSesh1$feedbackType)
+prfSesh1 <- performance(prediSesh1, measure = "tpr", x.measure = "fpr")
+aucSesh1 <- performance(prediSesh1, measure = "auc")
+aucSesh1 <- aucSesh1@y.values[[1]]
+
+predCont2 <- predict(modelCont2, testCont2 %>% select(-feedbackType))
+prediCont2 <- prediction(predCont2, testCont2$feedbackType)
+prfCont2 <- performance(prediCont2, measure = "tpr", x.measure = "fpr")
+aucCont2 <- performance(prediCont2, measure = "auc")
+aucCont2 <- aucCont2@y.values[[1]]
+
+predEvery1 <- predict(modelEvery1, testEvery1 %>% select(-feedbackType))
+prediEvery1 <- prediction(predEvery1, testing1$feedbackType)
+prfEvery1 <- performance(prediEvery1, measure = "tpr", x.measure = "fpr")
+aucEvery1 <- performance(prediEvery1, measure = "auc")
+aucEvery1 <- aucEvery1@y.values[[1]]
+
+
+plot(prf1, col = "#F8766D", main = "ROC Curve")
+plot(prfOHE, add = TRUE, col = "#E88526")
+plot(prfOHE2, add = TRUE, col = "#5EB300")
+plot(prfOHE3, add = TRUE, col = "#00ADFA")
+plot(prfCont1, add = TRUE, col = "#DB72FB")
+plot(prfSesh1, add = TRUE, col = "#FF61C3")
+plot(prfCont2, add = TRUE, col = "#619CFF")
+plot(prfEvery1, add = TRUE, col = "#00BF74")
+```
+```{r, echo = FALSE}
+htmlTable(matrix(data =c("auc1", "aucOHE", "aucOHE2", "aucOHE3", "aucCont1", "aucSesh1", "aucCont2", "aucEvery1", 
+               round(auc1, digits=3), round(aucOHE,digit=3), round(aucOHE2,digits=3), 
+               round(aucOHE3, digits=3), round(aucCont1,digits=3), round(aucSesh1,digits=3), 
+               round(aucCont2,digits=3), round(aucEvery1,digits=3)), ncol = 2))
+```
+
+Based on the predefined selection criteria of highest AUC (area under ROC curve), modelCont2 was selected as the best model. This logistic regression model uses average neuron spikes, contrast difference, and session number to predict feedback type. Testing this model, the following confusion matrix was constructed.
+```{r, echo = FALSE}
+predCont2 <- predict(modelCont2, testCont2 %>% select(-feedbackType))
+predModelCont2 <- factor(predCont2 > 0.5, labels = c('-1', '1'))
+#mean(predModelCont2 != testCont2$feedbackType)
+
+#confusionMatrix(data = predModelCont2, as.factor(testCont2$feedbackType))
+confMatrix <- table(PredictedVal = predModelCont2, ActualVal = as.factor(testCont2$feedbackType))
+htmlTable(confMatrix)
+```
+Using this test data, the model had a misclassification rate of approximately 33%, with overall accuracy of around 66%. The kappa value was 0.0785, indicating slight agreement (better than random chance). 
+
+For comprehensiveness, modeling methods outside of logistic regression were also considered. Namely, XGBoost was chosen as an alternative modeling method. XGBoost was chosen as an alternative model as it is a scalable gradient-boosted decision tree, under the hypothesis that it may provide more accurate results when compared to the final logistic regression model chosen. Two XGBoost models were made, one including all predictors except the one-hot encoding variable for the mouse Hench (to avoid a rank deficient matrix). The second XGBoost model included all predictors, but excluded mice name as a factor entirely. These two models were both trained with a random 80% subset of the data, and tested on the remaining 20% from the original integrated data. Each model featured a maximum depth of 15, using 2 threads and 30 rounds for lowering root mean square deviation (RMSE). Confusion matrices were made for the test classification for each model, and the ROC curves were plotted (alongside the final logistic model modelCont2) to select an appropriate classification threshold, and to compare AUC with the logistic regression model. These plots are pictured below.
+```{r, echo = FALSE, include = FALSE}
+set.seed(999)
+contrastFrameXG <- contrastFrame %>%
+  mutate(feedbackType = as.numeric(as.character(feedbackType)))
+
+OHEMouse <- model.matrix(~miceName-1, data = contrastFrameXG)
+contrastFrameXG <- data.frame(contrastFrameXG, OHEMouse)
+
+trainSampXG <- sample.int(n = length, size = floor(.8 * length), replace = FALSE)
+trainXG <- contrastFrameXG[trainSampXG,]
+
+trainLabel <- trainXG$feedbackType
+trainXG <- trainXG %>%
+  select(-miceName, -feedbackType, -miceNameHench)
+testXG <- contrastFrameXG[-trainSampXG,] %>%
+  select(-miceName, -miceNameHench)
+
+modelXG <- xgboost(data = as.matrix(trainXG), label = trainLabel, max.depth = 15, nthread = 2, nrounds = 30)
+testXGt <- testXG %>%
+  select(-feedbackType)
+predXG <- predict(modelXG, as.matrix(testXGt))
+predModelXG <- factor(predXG > 0.2, labels = c('-1', '1'))
+
+
+
+trainSampXG1 <- sample.int(n = length, size = floor(.8 * length), replace = FALSE)
+trainXG1 <- contrastFrameXG[trainSampXG1,]
+
+trainLabel1 <- trainXG1$feedbackType
+trainXG1 <- trainXG1 %>%
+  select(-miceName, -feedbackType, -miceNameCori, -miceNameHench, -miceNameForssmann, -miceNameLederberg)
+testXG1 <- contrastFrameXG[-trainSampXG1,] %>%
+  select(-miceName, -miceNameCori,  -miceNameHench, -miceNameForssmann, -miceNameLederberg)
+
+modelXG1 <- xgboost(data = as.matrix(trainXG1), label = trainLabel1, max.depth = 15, nthread = 2, nrounds = 30)
+testXGt1 <- testXG1 %>%
+  select(-feedbackType)
+predXG1 <- predict(modelXG1, as.matrix(testXGt1))
+predModelXG1 <- factor(predXG1 > 0.25, labels = c('-1', '1'))
+```
+```{r, echo = FALSE}
+predCont2 <- predict(modelCont2, testCont2 %>% select(-feedbackType))
+prediCont2 <- prediction(predCont2, testCont2$feedbackType)
+prfCont2 <- performance(prediCont2, measure = "tpr", x.measure = "fpr")
+aucCont2 <- performance(prediCont2, measure = "auc")
+aucCont2 <- aucCont2@y.values[[1]]
+
+predXG <- predict(modelXG, as.matrix(testXGt))
+prediXG <- prediction(predXG, testXG$feedbackType)
+prfXG <- performance(prediXG, measure = "tpr", x.measure = "fpr")
+aucXG <- performance(prediXG, measure = "auc")
+aucXG <- aucXG@y.values[[1]]
+
+predXG1 <- predict(modelXG1, as.matrix(testXGt1))
+prediXG1 <- prediction(predXG1, testXG1$feedbackType)
+prfXG1 <- performance(prediXG1, measure = "tpr", x.measure = "fpr")
+aucXG1 <- performance(prediXG1, measure = "auc")
+aucXG1 <- aucXG1@y.values[[1]]
+
+plot(prfCont2, col = "#F8766D", main = "ROC Curve")
+plot(prfXG, add = TRUE, col = "#619CFF")
+plot(prfXG1, add = TRUE, col = "#00BF74")
+```
+```{r, echo = FALSE}
+htmlTable(matrix(data=c("aucCont2", "aucXG", "aucXG1", round(aucCont2,digits=3), 
+                        round(aucXG,digits=3), round(aucXG1,digits=3)),ncol = 2))
+```
+Using AUC, modelXG was chosen as the final model (being chosen over the final logistic regression model as well). This model features all predictors except the one-hot encoded variable for the mouse Hench. Using the 20% subset of the original integrated data as test data, the following confusion matrix and statistics were calculated. 
+```{r, echo = FALSE}
+testXGt <- testXG %>%
+  select(-feedbackType)
+predXG <- predict(modelXG, as.matrix(testXGt))
+predModelXG <- factor(predXG > 0.2, labels = c('-1', '1'))
+#mean(predModelXG != testXG$feedbackType)
+
+#caret::confusionMatrix(data = predModelXG, as.factor(testXG$feedbackType))
+confMatrix <- table(PredictedVal = predModelXG, ActualVal = as.factor(testXG$feedbackType))
+htmlTable(confMatrix)
+```
+Using this test data, the model had a misclassification rate of 29.695%, with an overall accuracy of 70.3%. The kappa value was 0.2696, indicating a fair amount of agreement. 
+
+This final model maximizes the accuracy of prediction, while managing the models ability to predict both successes and failures well. It has an AUC of 0.711, implying the model is able to separate between classes fairly well. 
+
+## Prediction Performance Based on Test Sets
+
+As a final test of the predictive capability of the final chosen model, modelXG (which is an XGBoost model), was tested with predetermined test data, given as a measure to test the processing and integration capability of the project and to evaluate the model once more. The test data was given in the format of two additional RDS files, containing two test sets of 100 randomly chosen trials from sessions 1 and 18. This data was processed and integrated into a data structure similar to the one used for model building done throughout the project (albeit with smaller scale). There were a few notable challenges in integrating this test data. For one, since the data only reflected trials from sessions 1 and 18, only the mice Cori and Lederberg were represented. Since the model relied on data from the other mice as well, one hot encoded variables for the other mice were made as well (which contained all zero values). Average neuron spikes and contrast difference was calculated in a similar method as done previously, and the resultant data frame matched the ordering and structure of the data frame used for all model building, allowing for seemless testing with this new data.
+```{r, echo = FALSE}
+testSession=list()
+for(i in 1:2){
+  t <- c(1, 18)
+  testSession[[t[i]]]=readRDS(paste('/Users/jeremyelvander/Desktop/STA 141A/Final Project/testCode/test',i,'.rds',sep=''))
+}
+
+TestSeshInfo <- data.frame(trialNumber = 0, seshNum = 0, miceName = 0, feedbackType = 0, leftContrast = 0, rightContrast = 0, avgTrialNeuronSpk = 0)
+for(i in c(1,18)){
+  #Creating session number/trial number
+  seshFrame <- data.frame(trialNumber = c(1:length(testSession[[i]]$feedback_type)),
+                          seshNum = c(rep(i, times = length(testSession[[i]]$feedback_type))),
+                          miceName = c(rep(testSession[[i]]$mouse_name, times = length(testSession[[i]]$feedback_type))),
+                          feedbackType = c(testSession[[i]]$feedback_type),
+                          leftContrast = c(testSession[[i]]$contrast_left),
+                          rightContrast = c(testSession[[i]]$contrast_right))
+  
+  avgTrialNeuronSpk <- c()
+
+  for(j in 1:length(testSession[[i]]$feedback_type)){
+    avgTrialNeuronSpk <- c(avgTrialNeuronSpk, mean(apply(testSession[[i]]$spks[[j]], 1, sum)))
+  }
+  seshFrame <- data.frame(seshFrame, avgTrialNeuronSpk)
+  TestSeshInfo <- rbind(TestSeshInfo, seshFrame)
+}
+
+TestSeshInfo <- TestSeshInfo[-1,]
+
+testSeshInfo <- TestSeshInfo %>%
+  mutate(contrastDiff = abs(leftContrast - rightContrast))
+OHEMouse <- model.matrix(~miceName-1, data = testSeshInfo)
+testSeshInfo <- data.frame(testSeshInfo, OHEMouse, 
+                           miceNameForssmann = rep(0, times = 200), 
+                           miceNameHench =rep(0, times = 200))
+```
+```{r, echo = FALSE}
+set.seed(999)
+labels <- testSeshInfo$feedbackType
+finalTest <- testSeshInfo %>%
+  select(-feedbackType, -miceName, -miceNameHench)
+finalTest <- finalTest[, c("trialNumber", "seshNum", "leftContrast", "rightContrast",
+                           "avgTrialNeuronSpk","contrastDiff","miceNameCori","miceNameForssmann",
+                           "miceNameLederberg")]
+predFinal <- predict(modelXG, as.matrix(finalTest))
+predModelFinal <- factor(predFinal > 0.2, labels = c('-1', '1'))
+#mean(predModelFinal != labels)
+
+#caret::confusionMatrix(data = predModelFinal, as.factor(labels))
+confMatrix <- table(PredictedVal = predModelFinal, ActualVal = as.factor(labels))
+htmlTable(confMatrix)
+```
+Using this final test set, the final chosen modelXG has a misclassification rate of 25.5%, with an overall accuracy of 74.5%. It has a kappa vlaue of 0.3641, suggesting a fair amount of agreement. The confusion matrix, pictured above, shows the difference between true positive, true negative, false positive, and false negative. 
+
+## Discussion
+
+Overall, the final model chosen features a fair amount of accuracy and reliability in predicting the outcome of a trial (namely, whether it was a success or a failure). In doing so, the ultimate goal of the course project was met, as a model was found that can perform well in a predictive setting. This model may not be the optimal model for prediction, but performs well under the conditions set through exploratory data analysis and through the chosen modeling/validation techniques used. This modeling process allowed for a deeper, more fundamental understanding of the data, and allowed for practice with various statistical data science techniques. 
+
+There were several decisions made throughout the project that affect the final models predictive capability when ran against the test set. For one, as discussed previously, brain_area as a variable was omitted to increase the interpretability and decrease the complexity of neural activity as a measurement for feedback type. Only certain modeling techniques were considered (logistic regression and XGBoost), which may have prevented the theoretical optimal model from being chosen. These techniques were chosen due to familiarity and the ability for simple comparison through ROC and AUC. Additionally, using ROC and AUC as the ultimate decision criteria for model selection may have decreased the maximum accuracy for the model, in favor of a more valid and reliable one. 
+
+Some techniques were attempted to improve model performance with varying degrees of success. K-folds cross validation was tried as a substitute for simple data splitting, but with marginal success. This could be due to unfamiliarity with the intricacies of the caret package, and because of the format of the data being fed into CV functions. Additionally, when building the logistic regression models, backwards elimination variable selection was attempted, but did not result in different results. This could be because of some human error, or perhaps the full model did represent the best collection of predictors. 
+
+Ultimately, this project allowed for deeper understanding of the relationship between stimuli conditions, neural activity (and a few other factors), and the performance of a mouse in correctly turning a wheel. It allowed for a more rigid understanding of the underlying statistical methods used to analyze this relationship, and ultimately predict the outcome given the chosen factors.
+
+
+## Acknowledgements and References
+
+https://www.geeksforgeeks.org/k-fold-cross-validation-in-r-programming/
+
+https://xgboost.readthedocs.io/en/stable/R-package/xgboostPresentation.html
+
+https://topepo.github.io/caret/
+
+https://topepo.github.io/caret/train-models-by-tag.html#Logistic_Regression
+
+https://rpubs.com/jkylearmstrong/logit_w_caret
+
+https://topepo.github.io/caret/pre-processing.html
+
+https://www.programmingr.com/error-in-glm-fitx-c1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-na-nan-inf-in-039y039/
+
+https://www.statology.org/prediction-from-rank-deficient-fit-may-be-misleading/
+
+https://medium.com/@shaileydash/understanding-the-roc-and-auc-intuitively-31ca96445c02
+
+https://www.yourdatateacher.com/2021/06/14/are-you-still-using-0-5-as-a-threshold/
+
+https://www.hackerearth.com/practice/machine-learning/machine-learning-algorithms/beginners-tutorial-on-xgboost-parameter-tuning-r/tutorial/
+
+https://www.iguazio.com/glossary/classification-threshold/#:~:text=The%20most%20common%20method%20for,TN)%20at%20all%20classification%20thresholds.
+
+https://stats.stackexchange.com/questions/123124/how-to-determine-the-optimal-threshold-for-a-classifier-and-generate-roc-curve
+
+https://towardsdatascience.com/understanding-auc-roc-curve-68b2303cc9c5
+
+https://cran.r-project.org/web/packages/olsrr/vignettes/variable_selection.html
+
+https://topepo.github.io/caret/measuring-performance.html
+
+https://machinelearningmastery.com/one-hot-encoding-for-categorical-data/
+
+https://www.linkedin.com/advice/0/how-can-you-handle-categorical-variables-logistic-regression-jdtzc#:~:text=While%20working%20with%20logistic%20regression,should%20use%20one%20hot%20encoding.
+
+https://ggplot2-book.org/scales-colour
+
+https://bmcmedresmethodol.biomedcentral.com/articles/10.1186/s12874-019-0666-3
+
+https://machinelearningmastery.com/k-fold-cross-validation/
+
+https://www.digitalocean.com/community/tutorials/plot-roc-curve-r-programming
+
+ChatGPT conversation log:
+https://chat.openai.com/share/6b1925e1-90a5-4ee9-acf8-0dd7ef5a9ba5
+(Includes brief conversation on another subject at the beginning, as a new conversation was not started accidentally)
+
+Course notes/lecture slides/TA discussions and demos were also referenced in the execution of this project.

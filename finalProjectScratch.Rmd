@@ -1,0 +1,1087 @@
+---
+title: "Final Project Report"
+author: "Jeremy Elvander"
+date: "2024-03-12"
+output: html_document
+---
+
+get points from POLISHING report
+what to include in report: if you can say 3 sentences or more about a finding from a plot, keep that in main text, if 1 sentence put it in appendix
+
+look at relationship between neurons and stimulus/contrast condition, 
+IN DEMO - "decisions" references contrast conditions
+
+how does contrast change neuron behavior? alter success/failure?
+Note: in most success trial, neurons have higher number of spikes this is NOT true with zero stimulus, in that case failure has higher number of spikes
+
+how does success rate change over time as time goes on,
+can look at differences across sessions - different mice have different success rates, include what mouse it is in prediction model?
+
+Dont have to share EDA for every session
+
+data integration:
+Can group data by mice, etc
+
+prediction model:
+give reader reason for why final model was chosen, dont forget testing/validation, find 2 reasons to justify model (1 must be grounded on data)
+
+Preprocessing
+testing
+test data will have same strucuture as session 1 and session 18
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(wesanderson)
+```
+
+```{r}
+session=list()
+for(i in 1:18){
+  session[[i]]=readRDS(paste('/Users/jeremyelvander/Desktop/STA 141A/Final Project/sessions/session',i,'.rds',sep=''))
+  #print(session[[i]]$mouse_name)
+  #print(session[[i]]$date_exp)
+}
+```
+
+```{r}
+session[[5]]$contrast_left[11]
+names(session[[1]])
+```
+
+Part 1. Exploratory data analysis. In this part, we will explore the features of the data sets in order to build our prediction model. In particular, we would like to (i) describe the data structures across sessions (e.g., number of neurons, number of trials, stimuli conditions, feedback types), (ii) explore the neural activities during each trial, (iii) explore the changes across trials, and (iv) explore homogeneity and heterogeneity across sessions and mice. 
+
+(i)
+table for storing exploratory session information:
+```{r}
+sessionNumber <- c(1:18)
+sessInfo <- data.frame(sessionNumber)
+```
+
+Number of neurons:
+```{r}
+numNeurons <- c()
+for(i in 1:18){
+  print(paste("Number of neurons in session", 
+              paste0(i, 
+                     paste(":", length(session[[i]]$brain_area)))))
+  numNeurons <- c(numNeurons, length(session[[i]]$brain_area))
+
+}
+sessInfo <- data.frame(sessInfo, numNeurons)
+sessInfo
+```
+
+Number of trials:
+```{r}
+#One feedback type per trial, so can use # of feedback types per session for # of trials per session
+numTrials <- c()
+for(i in 1:18){
+  numTrials <- c(numTrials, length(session[[i]]$feedback_type))
+}
+sessInfo <- data.frame(sessInfo, numTrials)
+sessInfo
+```
+```{r}
+sum(sessInfo$numTrials)
+```
+
+
+Mouse name:
+```{r}
+mouseName <- c()
+for(i in 1:18){
+  mouseName <- c(mouseName, session[[i]]$mouse_name)
+}
+sessInfo <- data.frame(sessInfo, mouseName)
+sessInfo
+```
+
+
+
+Exploratory trial information per session:
+```{r}
+sessionTrialInfo <- list()
+for(i in 1:length(sessInfo$sessionNumber)){
+  trial <- c()
+  leftContrast <- c()
+  rightContrast <- c()
+  feedbackType <- c()
+  for(j in 1:sessInfo$numTrials[i]){
+    trial <- c(trial, j)
+    leftContrast <- c(leftContrast, session[[i]]$contrast_left[j])
+    rightContrast <- c(rightContrast, session[[i]]$contrast_right[j])
+    feedbackType <- c(feedbackType, session[[i]]$feedback_type[j])
+  }
+  sesh <- data.frame(trial, leftContrast, rightContrast, feedbackType)
+  sessionTrialInfo[[i]] <- sesh
+}
+sessionTrialInfo[[5]]
+
+session[[5]]$contrast_left[[11]]
+```
+
+(ii)
+exploring neural activities during each trial
+```{r}
+session[[5]]$time[11]
+
+test <- data.frame(session[[1]]$spks[[2]])
+sum(test$X2)
+dim(session[[7]]$spks[[14]])[2]
+session[[5]]$time[[1]]
+
+session[[5]]$time[[1]][40]-session[[5]]$time[[1]][1]
+session[[1]]$time[[1]]-session[[1]]$time[[1]][1]
+data.frame(session[[1]]$spks[1])
+```
+There are 40 time bins for each trial across every session! the actual times vary between trials in the same session (as sessions went on for an extended period of time), but the times stay consistent at 0.39 between first and last time recording, with an interval of 0.01 seconds. standardize time bins to view relationship across different trials within a session
+
+finding proportion of total neurons that spiked across the time interval for the first 10 trials sampled from session 1 and 18
+
+session 1: mouse = cori
+```{r}
+time <- c(session[[1]]$time[[1]]-session[[1]]$time[[1]][1])
+avgSpikeFrame1 <- data.frame(time)
+for(i in 1:10){
+  trial <- data.frame(session[[1]]$spks[[i]])
+  ProportionFired <- c()
+  for(j in 1:40){
+    ProportionFired <- c(ProportionFired, sum(trial[,j])/734)
+  }
+  avgSpikeFrame1 <- data.frame(avgSpikeFrame1, ProportionFired)
+}
+head(avgSpikeFrame1)
+```
+
+```{r}
+colors <- wes_palette("Darjeeling1", 5, type = c("discrete"))
+ggplot(avgSpikeFrame1, aes(x=time)) +
+  geom_line(aes(y = ProportionFired), color = colors[1]) +
+  geom_line(aes(y = ProportionFired.1), color = colors[2]) +
+  geom_line(aes(y = ProportionFired.2), color = colors[3]) +
+  geom_line(aes(y = ProportionFired.3), color = colors[4]) +
+  geom_line(aes(y = ProportionFired.4), color = colors[5])
+  
+```
+
+
+Session 18: mouse = lederberg
+```{r}
+time <- c(session[[1]]$time[[1]]-session[[1]]$time[[1]][1])
+avgSpikeFrame2 <- data.frame(time)
+for(i in 1:10){
+  trial <- data.frame(session[[18]]$spks[[i]])
+  Proportion18Fired <- c()
+  for(j in 1:40){
+    Proportion18Fired <- c(Proportion18Fired, sum(trial[,j])/1090)
+  }
+  avgSpikeFrame2 <- data.frame(avgSpikeFrame2, Proportion18Fired)
+}
+head(avgSpikeFrame2)
+```
+
+
+```{r}
+colors <- wes_palette("Darjeeling1", 5, type = c("discrete"))
+ggplot(avgSpikeFrame2, aes(x=time)) +
+  geom_line(aes(y = Proportion18Fired), color = colors[1]) +
+  geom_line(aes(y = Proportion18Fired.1), color = colors[2]) +
+  geom_line(aes(y = Proportion18Fired.2), color = colors[3]) +
+  geom_line(aes(y = Proportion18Fired.3), color = colors[4]) +
+  geom_line(aes(y = Proportion18Fired.4), color = colors[5])
+  
+```
+
+No clear relationship between neuron spikes and time throughout different trials in sessions 1/18, results similar across all other sessions/trials
+
+Look at relationship between # of spikes in trial and contrast/success/failure
+
+First, find average number of spikes per neuron across the time interval:
+```{r}
+Spks <- apply(session[[1]]$spks[[1]], 1, sum)
+avgNeuronSpks <- data.frame(Spks)
+for(i in 2:100){
+  Spks <- apply(session[[1]]$spks[[i]], 1, sum)
+  avgNeuronSpks <- data.frame(avgNeuronSpks, Spks)
+  
+}
+avgNeuronSpks <- pivot_longer(avgNeuronSpks, everything())
+trialNum <- c(rep(1:100, times = 734))
+avgNeuronSpks <- data.frame(avgNeuronSpks, trialNum)
+avgNeuronSpks <- avgNeuronSpks %>%
+  select(value, trialNum)
+avgNeuronSpks %>%
+  filter(value > 20)
+```
+
+
+
+plot # of spikes per neuron for sample of 100 trials in session 1 (looking to see if spikes go down)
+```{r}
+ggplot(avgNeuronSpks, aes(x = trialNum, y = value)) +
+  geom_point(size = 0.5)
+```
+Relationship unclear as this graph presents every active neuron during trial, find average number of spikes for every active neuron per trial then graph again:
+```{r}
+Spks1 <- mean(apply(session[[1]]$spks[[1]], 1, sum))
+avgNeuronSpksTotal <- data.frame(Spks1)
+
+for(i in 2:100){
+  Spks1 <- mean(apply(session[[1]]$spks[[i]], 1, sum))
+  avgNeuronSpksTotal <- data.frame(avgNeuronSpksTotal, Spks1)
+  
+}
+avgNeuronSpksTotal <- pivot_longer(avgNeuronSpksTotal, everything())
+avgNeuronSpksTotal <- avgNeuronSpksTotal %>%
+  select(value) %>%
+  mutate(trial = c(1:100))
+
+avgNeuronSpksTotal
+```
+graphing average number of total spikes across neurons per trial:
+
+```{r}
+ggplot(avgNeuronSpksTotal, aes(x = trial, y = value)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE)
+```
+It seems as though (for session 1), the average number of spikes per trial tends to go down as trials went on during the session. This could indicate the mouse got tired. Check this across all other sessions/for the other mice (taking a sample of just the 1st hundred trials):
+
+```{r}
+
+finalNrnFrame <- data.frame(trial = c(1:100))
+for(i in 1:18){
+  NeuronTot <- c()
+  for(j in 1:100){
+    tmpSpk <- mean(apply(session[[i]]$spks[[j]], 1, sum))
+    NeuronTot <- c(NeuronTot, tmpSpk)
+  }
+  #NeuronTot <- NeuronTot %>%
+   # pivot_longer(NeuronTot, everything()) %>%
+   # select(value)
+  finalNrnFrame <- data.frame(finalNrnFrame, NeuronTot)
+}
+finalNrnFrame
+```
+Pivoting data frame:
+```{r}
+tmp <- finalNrnFrame %>%
+  select(-trial) %>%
+  stack()
+tmp <- data.frame(tmp, trial = rep(1:100, times = 18), sessionNumber = rep(1:18, each = 100)) %>%
+  select(-ind) %>%
+  group_by(sessionNumber)
+tmp
+```
+
+
+
+Looking at average neuron spikes for first hundred trials for session 1-18, color coding by trial:
+```{r}
+library(viridis)
+library(ggformula)
+kelly_colors = c('F2F3F4', '222222', 'F3C300', '875692', 'F38400', 'A1CAF1', 'BE0032', 'C2B280', '848482', '008856', 'E68FAC', '0067A5', 'F99379', '604E97', 'F6A600', 'B3446C', 'DCD300', '882D17', '8DB600', '654522', 'E25822', '2B3D26')
+
+
+plot <- ggplot(tmp, aes(x = trial, y = values, color = as.character(sessionNumber))) +
+  geom_point(size = 0.5) +
+  geom_spline(aes(group = sessionNumber))
+print(plot)
+```
+As seen by the plots, there is great variety across sessions with the average number of neuron spikes per trial (for the first 100 trials). As we can see, session 6 had a far lower average number of spikes, and remained relatively consistent across trials. On the other hand, session 13 had a far higher average number of spikes, and also remained approximately consistent across trials. There were some sessions, however, that had large change in average number of spikes as trials continued. Many were trending in the negative direction (such as session 9), and some had a strong positive trend (such as session 7). 
+
+Focusing on some of these sessions:
+```{r}
+palette <- scale_color_hue() 
+hex <- c(palette$palette(18))
+hex
+plotScale <- ggplot_build(plot)
+yRange <- plotScale$layout$panel_scales_y[[1]]$range$range
+```
+
+Extracting interesting graphs:
+```{r}
+ggplot(finalNrnFrame, aes(x=trial)) +
+  geom_point(aes(y=NeuronTot.5), size = 0.5, color = hex[15]) +
+  geom_spline(aes(y=NeuronTot.5), color = hex[15]) +
+  
+  geom_point(aes(y=NeuronTot.12), size = 0.5, color = hex[5]) +
+  geom_spline(aes(y=NeuronTot.12), color = hex[5]) +
+  
+  #geom_point(aes(y=NeuronTot.8), size = 0.5, color = hex[18]) +
+  #geom_spline(aes(y=NeuronTot.8), color = hex[18]) +
+  
+  geom_point(aes(y=NeuronTot.6), size = 0.5, color = hex[16]) +
+  geom_spline(aes(y=NeuronTot.6), color = hex[16]) +
+  
+  scale_y_continuous(limits = yRange)
+```
+This shows session 13 (highest), session 6 (lowest), and session 7 (positive trend)
+
+
+Investigating average neurons fired for first 100 trials per session, color coding by mouse:
+
+first, adding mouse ID to data frame:
+```{r}
+sessInfoRel <- data.frame(sessionNumber = sessInfo$sessionNumber, mouseName = sessInfo$mouseName)
+sessInfoRel
+tmp <- merge(tmp, sessInfoRel, by = "sessionNumber")
+tmp
+```
+
+
+Plotting average nueron spikes for first hundred trials per session, color coding according to mouse:
+```{r}
+ggplot(tmp, aes(x = trial, y = values, color = mouseName)) +
+  geom_point(size = 0.5) +
+  geom_spline()
+```
+There was great variety in the performance of the 4 mice across trials, but by grouping the session that each mouse was the subject in together we can see that there were some difference between the average neurons fired for the 4 mice. Forssmann had the least of the group, but trended slightly up as the trials continued (when combining all the sessions Forssmann was the subject in). Hench and Lederberg were very close in performance, while Cori led the pack. 
+
+Next, look at average number of spikes fired for first 100 trials per session, comparing to whether the trial was a success or a failure.grouped by session
+
+1 = success, -1 = failure
+adding feedback type to data frame
+```{r}
+
+feedbackTemp <- c()
+for(i in 1:18){
+  feedback <- session[[i]]$feedback_type
+  for(j in 1:100){
+    feedbackTemp <- c(feedbackTemp, feedback[j])
+  }
+}
+tmp <- data.frame(tmp, feedbackType = as.character(feedbackTemp))
+
+```
+
+```{r}
+tmp
+session[[6]]$feedback_type[1:100]
+```
+```{r}
+ggplot(tmp, aes(x = trial, y = values, color = as.character(sessionNumber), shape = feedbackType)) +
+         geom_point(size = 0.9)
+```
+Not super useful plot, no longer consider session:
+```{r}
+ggplot(tmp, aes(x = trial, y = values, color = feedbackType)) +
+  geom_point(size = 0.5) +
+  geom_smooth(method = "lm")
+  
+```
+It seems that trials that resulted in success tended to have slightly higher average neuron spikes across all neurons, when looking at the first 100 trials across all sessions. 
+
+
+Reanalyzing average spikes for trials color coded by session, splitting into two plots one with success one with failure:
+```{r}
+ggplot(tmp, aes(x = trial, y = values, color = as.character(sessionNumber))) +
+  geom_point(size = 0.5) +
+  geom_spline() +
+facet_wrap(~feedbackType)
+```
+By splitting up trial analysis into success and failure specific plots, we can see that, depending on the session, there is not a huge difference in average neuron spikes between success and failure trials. Session 6, which had a low level of spikes, has low spikes for both successful and unsuccessful trials. Similar can be found with session 13, which had high spikes irrespective of whether the trial was a success or failure. For some sessions, however, there is much higher variability among success and failure trials. Additionally, there were more successful trials than unsuccessful trials which can be seen by the relatively sparse points presented in the -1 feedback graph. 
+
+then look at spikes per trial, whether trial was success or failure, grouped by mouse
+Looking at mouse, splitting up by success/failure:
+```{r}
+ggplot(tmp, aes(x = trial, y = values, color = mouseName)) +
+  geom_point(size = 0.5) +
+  geom_spline() +
+  facet_wrap(~feedbackType)
+```
+The two mice performing at the two extremes of the data set (cori with higher average number of neuron spikes and Forssmann with lower level of neuron spikes) both remained relatively consistent with the average number of spikes per trial regardless if the trial was a success or failure. Forssmann remained particularly consistent. Hench and lederberg, however, had much larger variety in trials that resulted in failure, with the average number of spikes potentially being lower. 
+
+add contrast to our 100 sample frame:
+```{r}
+contrLeft <- c()
+contrRight <- c()
+for(i in 1:18){
+  for(j in 1:100){
+    contrLeft <- c(contrLeft, session[[i]]$contrast_left[j])
+    contrRight <- c(contrRight, session[[i]]$contrast_right[j])
+  }
+}
+tmp <- data.frame(tmp, ContrastLeft = contrLeft, ContrastRight = contrRight)
+```
+```{r}
+tmp
+```
+Look at contrast as it related to average number of spikes, grouped by contrast (?)
+```{r}
+library(gridExtra)
+plot1 <- ggplot(tmp, aes(x = trial, y = values, color = as.character(ContrastLeft))) +
+  geom_point(size = 0.5) +
+  geom_spline()
+plot2 <- ggplot(tmp, aes(x = trial, y = values, color = as.character(ContrastRight))) +
+  geom_point(size = 0.5) +
+  geom_spline()
+grid.arrange(plot1, plot2)
+```
+No clear relationship, though there seems to be higher average spikes when right contrast is higher (but only slightly) Additionally, it seems that there is more clustering at lower average spikes for 0 contrast across both left and right contrast, whereas the average spikes for 1 contrast is more evenly distributed. 
+
+
+look at contrast as it related to success/failure
+for left contrast:
+```{r}
+ggplot(tmp, aes(x = trial, y = values, color = as.character(ContrastLeft))) +
+  geom_point(size = 0.5) +
+  geom_spline() +
+  facet_wrap(~feedbackType)
+```
+```{r}
+ggplot(tmp, aes(x = trial, y = values, color = as.character(ContrastRight))) +
+  geom_point(size = 0.5) +
+  geom_spline() +
+  facet_wrap(~feedbackType)
+```
+There is a clear difference between average number of neuron spikes and contrast for right contrast for successful trials (where higher contrast correlated with higher spikes), but number of neuron spikes for right contrast failure trials was much more variable. For left contrast, there was a less clear relationship, for both successes and failures.
+
+Look at proportion of success by session and by mouse:
+
+first, total amount of trials that were success:
+
+recreating 'tmp' data frame with every trial, instead of 100 trial sample
+```{r}
+AllTrialSeshInfo <- data.frame(trialNumber = 0, seshNum = 0, miceName = 0, feedbackType = 0, leftContrast = 0, rightContrast = 0, avgTrialNeuronSpk = 0)
+for(i in 1:18){
+  #Creating session number/trial number
+  seshFrame <- data.frame(trialNumber = c(1:length(session[[i]]$feedback_type)),
+                          seshNum = c(rep(i, times = length(session[[i]]$feedback_type))),
+                          miceName = c(rep(session[[i]]$mouse_name, times = length(session[[i]]$feedback_type))),
+                          feedbackType = c(session[[i]]$feedback_type),
+                          leftContrast = c(session[[i]]$contrast_left),
+                          rightContrast = c(session[[i]]$contrast_right))
+  
+  avgTrialNeuronSpk <- c()
+
+  for(j in 1:length(session[[i]]$feedback_type)){
+    avgTrialNeuronSpk <- c(avgTrialNeuronSpk, mean(apply(session[[i]]$spks[[j]], 1, sum)))
+  }
+  seshFrame <- data.frame(seshFrame, avgTrialNeuronSpk)
+  AllTrialSeshInfo <- rbind(AllTrialSeshInfo, seshFrame)
+}
+AllTrialSeshInfo <- AllTrialSeshInfo[-1,]
+AllTrialSeshInfo
+```
+
+Proportion of successful trials total:
+```{r}
+AllTrialSeshInfo %>%
+  summarize(sum(feedbackType == 1)/nrow(AllTrialSeshInfo))
+```
+71% of trials were success
+
+Looking at success by trial and by mouse:
+```{r}
+successPer <- AllTrialSeshInfo %>%
+  group_by(seshNum) %>%
+  summarize(prop = mean(feedbackType == 1))
+```
+```{r}
+ggplot(successPer, aes(x = seshNum, y = prop)) +
+  geom_bar(stat ="identity") +
+  geom_abline(slope = 0, intercept = 0.7100964, color = "red")
+```
+All trials had relatively high success rates, (greater than 50%), but only a few were higher than the average of 71%. 
+
+success by mouse:
+```{r}
+successPerMouse <- AllTrialSeshInfo %>%
+  group_by(miceName) %>%
+  summarize(prop = mean(feedbackType == 1))
+```
+```{r}
+ggplot(successPerMouse, aes(x = miceName, y = prop)) +
+  geom_bar(stat = "identity") +
+  geom_abline(slope = 0, intercept = 0.7100964, color = "red")
+```
+All 4 mice performed well (greater than 50%), but Lederberg was the only mouse to beat the average. Cori did particularly bad. 
+
+Looking at success per session/per mouse compared to average number of neuron spikes per session/per mouse:
+
+By comparing, we see that cori had the highest level of average neuron spikes compared to the other mice, yet had the lowest success rate. This could point towards an inverse relationship, where as average neuron spikes go up, success rate goes down. This could perhaps be explained by a mouse being overwhelmed with high contrast, causing a large number of neuron spikes, but that does not translate to the mouse making the correct guess. 
+
+
+Check success rate for first 100 trials per session - (idea is success rate decreases as trials go on, mouse gets tired), creating
+bins of 10 trials
+```{r}
+tmp %>%
+  group_by(grp = rep(row_number(), length.out = n(), each = 10)) %>%
+  summarize(mean = mean(feedbackType == "1")) %>%
+  mutate(bins = rep(1:10, times = 18)) %>%
+  group_by(bins) %>%
+  summarize(avg=mean(mean)) %>%
+ggplot(aes(x = bins, y = avg)) +
+  geom_histogram(stat = "identity", binwidth = 1) +
+  geom_abline(slope = 0, intercept = 0.7100964, color = "red")
+```
+Average success rate for first 100 trials for every session, in groups of 10 trials. Success rate stays relatively consistent, does not fall off. 
+
+
+
+```{r}
+tmp
+finalNrnFrame
+names(session[[1]])
+tmpSpk <- mean(apply(session[[i]]$spks[[j]], 1, sum))
+length(session[[1]]$feedback_type)
+c(1:length(session[[1]]$feedback_type))
+
+c(session[[1]]$feedback_type)
+
+data.frame(trialNumber = c(1:length(session[[1]]$feedback_type)),
+                          seshNum = c(rep(1, times = length(session[[1]]$feedback_type))),
+                          miceName = c(rep(session[[1]]$mouse_name, times = length(session[[1]]$feedback_type))),
+                          feedbackTyp = c(session[[1]]$feedback_type))
+
+session[[1]]$contrast_left
+
+test1 <- data.frame(col1 = c(1), col2 = c(1), col3 = c(1))
+test2 <- data.frame(col1 = c(2), col2 = c(2), col3 = c(2))
+newTest <- rbind(test1, test2)
+newTest
+```
+
+
+
+lower number of spikes correlates with higher number of success, mice arent overhwelmed with experiment? make histogram?
+
+
+
+
+integrate data
+- data has been integrated
+- to finish integrating data, rename 1 and -1 as factors
+```{r}
+AllTrialSeshInfo$feedbackType <- as.factor(AllTrialSeshInfo$feedbackType)
+AllTrialSeshInfo
+```
+
+
+
+build model
+
+Using logistic regression
+```{r}
+length <- length(AllTrialSeshInfo$feedbackType)
+trainSample <- sample.int(n = length, size = floor(.8 * length), replace = FALSE)
+
+training1 <- AllTrialSeshInfo[trainSample, ]
+testing1  <- AllTrialSeshInfo[-trainSample, ]
+logModel1 <- glm(feedbackType ~ leftContrast + rightContrast + avgTrialNeuronSpk, data = training1, family = binomial)
+summary(logModel1)
+```
+testing first model:
+```{r}
+pred1 <- predict(logModel1, testing1 %>% select(-feedbackType))
+predModel1 <- factor(pred1 > 0.5, labels = c('-1', '1'))
+mean(predModel1 != testing1$feedbackType)
+
+confusionMatrix(data = predModel1, testing1$feedbackType)
+```
+Using logistic regression with k-folds cross validation:
+```{r}
+set.seed(10000)
+trainIndexKCV1 <- sample.int(n = length, size = floor(.8 * length), replace = FALSE)
+trainKCV1 <- AllTrialSeshInfo[trainIndexKCV1,]
+testKCV1 <- AllTrialSeshInfo[trainIndexKCV1,]
+  
+trainSpecs <- trainControl(method = "cv", number = 10)
+modelKCV1 <- train(feedbackType ~ leftContrast + rightContrast + avgTrialNeuronSpk,
+                   data = trainKCV1, trControl = trainSpecs, method = "glmnet", family = binomial(link = "logit"))
+predKCV1 <- predict(modelKCV1, testKCV1)
+confusionMatrix(predKCV1, testKCV1$feedbackType)
+```
+
+
+
+
+Using logistic regression with k-folds cross validation: DID NOT WORK WELL
+```{r}
+#AllTrialSeshInfo
+set.seed(4722)
+library(caret)
+trainingIndex <- createDataPartition(AllTrialSeshInfo$feedbackType, p = 0.8, list = FALSE, times = 1)
+
+trainFrame <- AllTrialSeshInfo[trainingIndex,]
+trainFrame$feedbackType[trainFrame$feedbackType == 1] <- "success"
+trainFrame$feedbackType[trainFrame$feedbackType == -1] <- "failure"
+trainFrame$feedbackType <- as.factor(trainFrame$feedbackType)
+
+testFrame <- AllTrialSeshInfo[-trainingIndex,]
+testFrame$feedbackType[testFrame$feedbackType == 1] <- "success"
+testFrame$feedbackType[testFrame$feedbackType == -1] <- "failure"
+testFrame$feedbackType <- as.factor(testFrame$feedbackType)
+
+
+
+TrainControl <- trainControl(method = "cv", number = 10, savePredictions = "all", classProbs = TRUE)
+
+
+logModel2 <- train(feedbackType ~ leftContrast + rightContrast + avgTrialNeuronSpk, 
+                   data = trainFrame, method = "glm", family = binomial, trControl = TrainControl)
+logModel2$results
+```
+Testing:
+```{r}
+pred2 <- predict(logModel2, testFrame)
+#predModel2 <- factor(pred2 > 0,5, labels = c('-1', '1'))
+#mean(predModel2 != testFrame$feedbackType)
+
+
+confusionMatrix(data = prediction2, testFrame$feedbackType)
+```
+
+
+
+```{r}
+set.seed(4722)
+dataTest <- AllTrialSeshInfo
+dataTest$feedbackType[dataTest$feedbackType == 1] <- "success"
+dataTest$feedbackType[dataTest$feedbackType == -1] <- "failure"
+dataTest$feedbackType <- as.factor(dataTest$feedbackType)
+
+TrainControlTest <- trainControl(method = "repeatedcv", number = 10, repeats = 5, search = "random",
+                                 savePredictions = "all", classProbs =)
+
+logModelTest <- train(feedbackType ~ leftContrast + rightContrast + avgTrialNeuronSpk, 
+                   data = dataTest, method = "glm", family = binomial, trControl = TrainControlTest)
+logModelTest
+```
+
+
+
+```{r}
+print(logModelTest)
+summary(logModelTest)
+```
+K - folds is not working. Try to factor in mouse type using one hot encoding:
+```{r}
+OHEMouseInfo <- AllTrialSeshInfo
+OHEMouse <- model.matrix(~miceName-1, data = OHEMouseInfo)
+OHEMouseInfo <- data.frame(OHEMouseInfo, OHEMouse)
+
+OHEMouseInfo %>%
+  filter(miceNameLederberg == 1)
+```
+Building new model with mouse as variable:
+```{r}
+trainOHESample <- sample.int(n = length, size = floor(.8 * length), replace = FALSE)
+trainOHE <- OHEMouseInfo[trainOHESample,]
+testOHE <- OHEMouseInfo[-trainOHESample,]
+modelOHE1 <- glm(feedbackType ~ leftContrast + rightContrast + avgTrialNeuronSpk + 
+                   miceNameCori + miceNameForssmann + miceNameHench + miceNameLederberg, 
+                 data = trainOHE, family = binomial(link = "logit"))
+summary(modelOHE1)
+```
+prediction;
+```{r}
+predOHE <- predict(modelOHE1, testOHE %>% select(-feedbackType))
+predModelOHE1 <- factor(predOHE > 0.5, labels = c('-1', '1'))
+mean(predModelOHE1 != testOHE$feedbackType)
+
+confusionMatrix(data = predModelOHE1, testOHE$feedbackType)
+```
+Testing removing lederburg to avoid NA singularity:
+```{r}
+trainOHESample2 <- sample.int(n = length, size = floor(.8 * length), replace = FALSE)
+trainOHE2 <- OHEMouseInfo[trainOHESample2,]
+testOHE2 <- OHEMouseInfo[-trainOHESample2,]
+modelOHE2 <- glm(feedbackType ~ leftContrast + rightContrast + avgTrialNeuronSpk + 
+                   miceNameCori + miceNameForssmann + miceNameHench, 
+                 data = trainOHE2, family = binomial(link = "logit"))
+summary(modelOHE2)
+```
+
+```{r}
+predOHE2 <- predict(modelOHE2, testOHE2 %>% select(-feedbackType))
+predModelOHE2 <- factor(predOHE2 > 0.5, labels = c('-1', '1'))
+mean(predModelOHE2 != testOHE2$feedbackType)
+
+confusionMatrix(data = predModelOHE2, testOHE2$feedbackType)
+```
+
+
+
+
+OHE prediction model has worse accuracy... trying OHE again
+```{r}
+trainOHESample3 <- sample.int(n = length, size = floor(.8 * length), replace = FALSE)
+trainOHE3 <- AllTrialSeshInfo[trainOHESample3,]
+testOHE3 <- AllTrialSeshInfo[-trainOHESample3,]
+modelOHE3 <- glm(feedbackType ~ leftContrast + rightContrast + avgTrialNeuronSpk + 
+                   miceName, 
+                 data = trainOHE3, family = binomial(link = "logit"))
+summary(modelOHE3)
+
+```
+prediction:
+```{r}
+predOHE3 <- predict(modelOHE3, testOHE3 %>% select(-feedbackType))
+predModelOHE3 <- factor(predOHE3 > 0.5, labels = c('-1', '1'))
+mean(predModelOHE3 != testOHE3$feedbackType)
+
+confusionMatrix(data = predModelOHE3, testOHE3$feedbackType)
+```
+Using mice has resulted in worse models
+
+Trying to include variable that looks at difference between contrast:
+First adding that to frame:
+```{r}
+contrastFrame <- AllTrialSeshInfo %>%
+  mutate(contrastDiff = abs(leftContrast - rightContrast))
+contrastFrame
+```
+Modeling:
+```{r}
+trainContSample1 <- sample.int(n = length, size = floor(.8 * length), replace = FALSE)
+trainCont1 <- contrastFrame[trainContSample1,]
+testCont1 <- contrastFrame[-trainContSample1,]
+modelCont1 <- glm(feedbackType ~ leftContrast + rightContrast + avgTrialNeuronSpk + 
+                   contrastDiff, 
+                 data = trainCont1, family = binomial(link = "logit"))
+summary(modelCont1)
+
+```
+
+```{r}
+predCont1 <- predict(modelCont1, testCont1 %>% select(-feedbackType))
+predModelCont1 <- factor(predCont1 > 0.5, labels = c('-1', '1'))
+mean(predModelCont1 != testCont1$feedbackType)
+
+confusionMatrix(data = predModelCont1, testCont1$feedbackType)
+```
+Throwing in session number (some sessions performed noticeably worse than others, most trials had similar average success rates)
+```{r}
+trainSeshSample1 <- sample.int(n = length, size = floor(.8 * length), replace = FALSE)
+trainSesh1 <- AllTrialSeshInfo[trainSeshSample1,]
+testSesh1 <- AllTrialSeshInfo[-trainSeshSample1,]
+modelSesh1 <- glm(feedbackType ~ leftContrast + rightContrast + avgTrialNeuronSpk + 
+                   seshNum, 
+                 data = trainSesh1, family = binomial(link = "logit"))
+summary(modelSesh1)
+```
+```{r}
+predSesh1 <- predict(modelSesh1, testSesh1 %>% select(-feedbackType))
+predModelSesh1 <- factor(predSesh1 > 0.5, labels = c('-1', '1'))
+mean(predModelSesh1 != testSesh1$feedbackType)
+
+confusionMatrix(data = predModelSesh1, testSesh1$feedbackType)
+```
+Building function to automate model making process:
+```{r}
+modelBuilder <- function(df, y, ...){
+  lst <- list(...)
+  lstLen <- length(lst)
+  adder <- function(x){
+    
+  }
+  
+  dfLen <- nrow(df)
+  
+  sample <- sample.int(n = dfLen, size = floor(.8 * dfLen), replace = FALSE)
+  training <- df[sample,]
+  testing <- df[-sample,]
+  
+  temp <- 0
+  model <- glm(y ~ for(i in 1:lstLen){temp <-}
+  
+  
+}
+
+
+
+trainSeshSample1 <- sample.int(n = length, size = floor(.8 * length), replace = FALSE)
+trainSesh1 <- AllTrialSeshInfo[trainSeshSample1,]
+testSesh1 <- AllTrialSeshInfo[-trainSeshSample1,]
+modelSesh1 <- glm(feedbackType ~ leftContrast + rightContrast + avgTrialNeuronSpk + 
+                   seshNum, 
+                 data = trainSesh1, family = binomial(link = "logit"))
+summary(modelSesh1)
+```
+
+Looking at just sessionNumber, avg spikes, and contrast difference:
+```{r}
+trainContSample2 <- sample.int(n = length, size = floor(.8 * length), replace = FALSE)
+trainCont2 <- contrastFrame[trainContSample2,]
+testCont2 <- contrastFrame[-trainContSample2,]
+modelCont2 <- glm(feedbackType ~ avgTrialNeuronSpk + 
+                   contrastDiff +seshNum, 
+                 data = trainCont2, family = binomial(link = "logit"))
+summary(modelCont2)
+```
+
+```{r}
+predCont2 <- predict(modelCont2, testCont2 %>% select(-feedbackType))
+predModelCont2 <- factor(predCont2 > 0.5, labels = c('-1', '1'))
+mean(predModelCont2 != testCont2$feedbackType)
+
+confusionMatrix(data = predModelCont2, testCont2$feedbackType)
+
+confMatrix <- table(PredictedVal = predCont2, ActualVal = testCont2$feedbackType)
+confMatrix
+```
+Final model to try (uses everything)
+```{r}
+trainEverySamp1 <- sample.int(n = length, size = floor(.8 * length), replace = FALSE)
+trainEvery1 <- contrastFrame[trainEverySamp1,]
+testEvery1 <- contrastFrame[-trainEverySamp1,]
+modelEvery1 <- glm(feedbackType ~ avgTrialNeuronSpk + 
+                   contrastDiff +seshNum + leftContrast + rightContrast + trialNumber + miceName, 
+                 data = trainEvery1, family = binomial(link = "logit"))
+summary(modelEvery1)
+```
+```{r}
+predEvery1 <- predict(modelEvery1, testEvery1 %>% select(-feedbackType))
+predModelEvery1 <- factor(predEvery1 > 0.5, labels = c('-1', '1'))
+mean(predModelEvery1 != testEvery1$feedbackType)
+
+confusionMatrix(data = predModelEvery1, testEvery1$feedbackType)
+```
+Backwards selection:
+
+
+
+
+
+LOOK AT ROC AND AUC FOR EVERY MODEL MADE
+```{r}
+library(ROCR)
+pred1 <- predict(logModel1, testing1 %>% select(-feedbackType))
+predi1 <- prediction(pred1, testing1$feedbackType)
+prf1 <- performance(predi1, measure = "tpr", x.measure = "fpr")
+auc1 <- performance(predi1, measure = "auc")
+auc1 <- auc1@y.values[[1]]
+
+predOHE <- predict(modelOHE1, testOHE %>% select(-feedbackType))
+prediOHE <- prediction(predOHE, testOHE$feedbackType)
+prfOHE <- performance(prediOHE, measure = "tpr", x.measure = "fpr")
+aucOHE <- performance(prediOHE, measure = "auc")
+aucOHE <- aucOHE@y.values[[1]]
+
+predOHE2 <- predict(modelOHE2, testOHE2 %>% select(-feedbackType))
+prediOHE2 <- prediction(predOHE2, testOHE2$feedbackType)
+prfOHE2 <- performance(prediOHE2, measure = "tpr", x.measure = "fpr")
+aucOHE2 <- performance(prediOHE2, measure = "auc")
+aucOHE2 <- aucOHE2@y.values[[1]]
+
+predOHE3 <- predict(modelOHE3, testOHE3 %>% select(-feedbackType))
+prediOHE3 <- prediction(predOHE3, testOHE3$feedbackType)
+prfOHE3 <- performance(prediOHE3, measure = "tpr", x.measure = "fpr")
+aucOHE3 <- performance(prediOHE3, measure = "auc")
+aucOHE3 <- aucOHE3@y.values[[1]]
+
+predCont1 <- predict(modelCont1, testCont1 %>% select(-feedbackType))
+prediCont1 <- prediction(predCont1, testCont1$feedbackType)
+prfCont1 <- performance(prediCont1, measure = "tpr", x.measure = "fpr")
+aucCont1 <- performance(prediCont1, measure = "auc")
+aucCont1 <- aucCont1@y.values[[1]]
+
+predSesh1 <- predict(modelSesh1, testSesh1 %>% select(-feedbackType))
+prediSesh1 <- prediction(predSesh1, testSesh1$feedbackType)
+prfSesh1 <- performance(prediSesh1, measure = "tpr", x.measure = "fpr")
+aucSesh1 <- performance(prediSesh1, measure = "auc")
+aucSesh1 <- aucSesh1@y.values[[1]]
+
+predCont2 <- predict(modelCont2, testCont2 %>% select(-feedbackType))
+prediCont2 <- prediction(predCont2, testCont2$feedbackType)
+prfCont2 <- performance(prediCont2, measure = "tpr", x.measure = "fpr")
+aucCont2 <- performance(prediCont2, measure = "auc")
+aucCont2 <- aucCont2@y.values[[1]]
+
+predEvery1 <- predict(modelEvery1, testEvery1 %>% select(-feedbackType))
+prediEvery1 <- prediction(predEvery1, testing1$feedbackType)
+prfEvery1 <- performance(prediEvery1, measure = "tpr", x.measure = "fpr")
+aucEvery1 <- performance(prediEvery1, measure = "auc")
+aucEvery1 <- aucEvery1@y.values[[1]]
+
+
+plot(prf1, col = "#F8766D", main = "ROC Curve")
+plot(prfOHE, add = TRUE, col = "#E88526")
+plot(prfOHE2, add = TRUE, col = "#5EB300")
+plot(prfOHE3, add = TRUE, col = "#00ADFA")
+plot(prfCont1, add = TRUE, col = "#DB72FB")
+plot(prfSesh1, add = TRUE, col = "#FF61C3")
+plot(prfCont2, add = TRUE, col = "#619CFF")
+plot(prfEvery1, add = TRUE, col = "#00BF74")
+```
+AUC:
+```{r}
+print(c(auc1, aucOHE, aucOHE2, aucOHE3, aucCont1, aucSesh1, aucCont2, aucEvery1))
+```
+Based on AUC, modelCont2 is the best model.
+
+```{r}
+summary(modelCont2)
+```
+
+
+Checking models built without logistic regression: XGBOOST
+
+```{r}
+library(xgboost)
+
+contrastFrameXG <- contrastFrame %>%
+  mutate(feedbackType = as.numeric(as.character(feedbackType)))
+
+
+OHEMouse <- model.matrix(~miceName-1, data = contrastFrameXG)
+contrastFrameXG <- data.frame(contrastFrameXG, OHEMouse)
+contrastFrameXG
+
+
+trainSampXG <- sample.int(n = length, size = floor(.8 * length), replace = FALSE)
+trainXG <- contrastFrameXG[trainSampXG,]
+
+trainLabel <- trainXG$feedbackType
+trainXG <- trainXG %>%
+  select(-miceName, -feedbackType, -miceNameHench)
+testXG <- contrastFrameXG[-trainSampXG,] %>%
+  select(-miceName, -miceNameHench)
+
+  
+
+modelXG <- xgboost(data = as.matrix(trainXG), label = trainLabel, max.depth = 15, nthread = 2, nrounds = 30)
+```
+predict:
+```{r}
+testXGt <- testXG %>%
+  select(-feedbackType)
+predXG <- predict(modelXG, as.matrix(testXGt))
+predModelXG <- factor(predXG > 0.2, labels = c('-1', '1'))
+mean(predModelXG != testXG$feedbackType)
+
+caret::confusionMatrix(data = predModelXG, as.factor(testXG$feedbackType))
+
+```
+build one more XGBoost model not considering mice:
+```{r}
+trainSampXG1 <- sample.int(n = length, size = floor(.8 * length), replace = FALSE)
+trainXG1 <- contrastFrameXG[trainSampXG1,]
+
+trainLabel1 <- trainXG1$feedbackType
+trainXG1 <- trainXG1 %>%
+  select(-miceName, -feedbackType, -miceNameCori, -miceNameHench, -miceNameForssmann, -miceNameLederberg)
+testXG1 <- contrastFrameXG[-trainSampXG1,] %>%
+  select(-miceName, -miceNameCori,  -miceNameHench, -miceNameForssmann, -miceNameLederberg)
+
+  
+
+modelXG1 <- xgboost(data = as.matrix(trainXG1), label = trainLabel1, max.depth = 15, nthread = 2, nrounds = 30)
+```
+
+```{r}
+testXGt1 <- testXG1 %>%
+  select(-feedbackType)
+predXG1 <- predict(modelXG1, as.matrix(testXGt1))
+predModelXG1 <- factor(predXG1 > 0.25, labels = c('-1', '1'))
+mean(predModelXG1 != testXG1$feedbackType)
+
+caret::confusionMatrix(data = predModelXG1, as.factor(testXG1$feedbackType))
+modelXG1$nfeatures
+```
+
+
+Compare chosen logistic model to XGBoost models:
+```{r}
+predCont2 <- predict(modelCont2, testCont2 %>% select(-feedbackType))
+prediCont2 <- prediction(predCont2, testCont2$feedbackType)
+prfCont2 <- performance(prediCont2, measure = "tpr", x.measure = "fpr")
+aucCont2 <- performance(prediCont2, measure = "auc")
+aucCont2 <- aucCont2@y.values[[1]]
+
+predXG <- predict(modelXG, as.matrix(testXGt))
+prediXG <- prediction(predXG, testXG$feedbackType)
+prfXG <- performance(prediXG, measure = "tpr", x.measure = "fpr")
+aucXG <- performance(prediXG, measure = "auc")
+aucXG <- aucXG@y.values[[1]]
+
+predXG1 <- predict(modelXG1, as.matrix(testXGt1))
+prediXG1 <- prediction(predXG1, testXG1$feedbackType)
+prfXG1 <- performance(prediXG1, measure = "tpr", x.measure = "fpr")
+aucXG1 <- performance(prediXG1, measure = "auc")
+aucXG1 <- aucXG1@y.values[[1]]
+
+plot(prfCont2, col = "#F8766D", main = "ROC Curve")
+plot(prfXG, add = TRUE, col = "#619CFF")
+plot(prfXG1, add = TRUE, col = "#00BF74")
+```
+```{r}
+print(c(aucCont2, aucXG, aucXG1))
+```
+
+aucXG best model based on AUC
+
+
+
+
+TEST DATA:
+```{r}
+testSession=list()
+for(i in 1:2){
+  t <- c(1, 18)
+  testSession[[t[i]]]=readRDS(paste('/Users/jeremyelvander/Desktop/STA 141A/Final Project/testCode/test',i,'.rds',sep=''))
+}
+
+TestSeshInfo <- data.frame(trialNumber = 0, seshNum = 0, miceName = 0, feedbackType = 0, leftContrast = 0, rightContrast = 0, avgTrialNeuronSpk = 0)
+for(i in c(1,18)){
+  #Creating session number/trial number
+  seshFrame <- data.frame(trialNumber = c(1:length(testSession[[i]]$feedback_type)),
+                          seshNum = c(rep(i, times = length(testSession[[i]]$feedback_type))),
+                          miceName = c(rep(testSession[[i]]$mouse_name, times = length(testSession[[i]]$feedback_type))),
+                          feedbackType = c(testSession[[i]]$feedback_type),
+                          leftContrast = c(testSession[[i]]$contrast_left),
+                          rightContrast = c(testSession[[i]]$contrast_right))
+  
+  avgTrialNeuronSpk <- c()
+
+  for(j in 1:length(testSession[[i]]$feedback_type)){
+    avgTrialNeuronSpk <- c(avgTrialNeuronSpk, mean(apply(testSession[[i]]$spks[[j]], 1, sum)))
+  }
+  seshFrame <- data.frame(seshFrame, avgTrialNeuronSpk)
+  TestSeshInfo <- rbind(TestSeshInfo, seshFrame)
+}
+
+TestSeshInfo <- TestSeshInfo[-1,]
+TestSeshInfo
+testSeshInfo <- TestSeshInfo %>%
+  mutate(contrastDiff = abs(leftContrast - rightContrast))
+OHEMouse <- model.matrix(~miceName-1, data = testSeshInfo)
+testSeshInfo <- data.frame(testSeshInfo, OHEMouse, 
+                           miceNameForssmann = rep(0, times = 200), 
+                           miceNameHench =rep(0, times = 200))
+testSeshInfo
+```
+
+Testing model:
+```{r}
+set.seed(2000)
+labels <- testSeshInfo$feedbackType
+finalTest <- testSeshInfo %>%
+  select(-feedbackType, -miceName, -miceNameHench)
+finalTest <- finalTest[, c("trialNumber", "seshNum", "leftContrast", "rightContrast",
+                           "avgTrialNeuronSpk","contrastDiff","miceNameCori","miceNameForssmann",
+                           "miceNameLederberg")]
+predFinal <- predict(modelXG, as.matrix(finalTest))
+predModelFinal <- factor(predFinal > 0.2, labels = c('-1', '1'))
+mean(predModelFinal != labels)
+
+caret::confusionMatrix(data = predModelFinal, as.factor(labels))
+```
+
+
+
+
+
+ 
+also to do: clean up labels etc of all graphs/tables
+
+
+
+
+
+
